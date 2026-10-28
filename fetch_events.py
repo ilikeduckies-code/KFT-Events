@@ -1,4 +1,4 @@
-import json, os, sys, requests
+import hashlib, json, os, sys, requests
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -10,6 +10,8 @@ MAX_PAGES = 15
 API = "https://playriftbound.com/api/gql"
 HASH = "868030f676276bec926c740aada7129713d4097f6e2dd7c3a0451c4fb43852eb"
 TZ = ZoneInfo("America/Edmonton")
+STATE_FILE = "state.json"
+SIG_KEYS = ["name", "start", "price", "capacity", "format", "type", "url"]
 
 def fetch_page(after=None):
     variables = {
@@ -50,7 +52,6 @@ def fetch_page(after=None):
     return body["data"]
 
 def find_connection(obj):
-    # the list lives under some key that contains "edges"; find it without guessing the name
     if isinstance(obj, dict):
         if "edges" in obj:
             return obj
@@ -60,6 +61,53 @@ def find_connection(obj):
                 return found
     return None
 
+def load_state():
+    try:
+        with open(STATE_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def build_embed(events):
+    lines = []
+    for e in events[:15]:
+        price = e["price"] or "See event page"
+        spots = f"{e['capacity']} spots" if e["capacity"] else ""
+        lines.append(f"**[{e['name']}]({e['url']})**\n{e['startLocal']} | {price}" + (f" | {spots}" if spots else ""))
+    desc = "\n\n".join(lines) if lines else "No events scheduled right now. Check back soon!"
+    return {
+        "title": "Upcoming Riftbound Events",
+        "description": desc[:4000],
+        "color": 0x2ECC71,
+        "footer": {"text": "Kung Fu Tea Huntington Hills | Updates automatically"},
+    }
+
+def discord_sync(events, state):
+    hook = os.environ.get("DISCORD_WEBHOOK")
+    if not hook:
+        print("No DISCORD_WEBHOOK set; skipping Discord")
+        return state
+    sig_data = [{k: e[k] for k in SIG_KEYS} for e in events]
+    sig = hashlib.sha256(json.dumps(sig_data, sort_keys=True).encode()).hexdigest()
+    if state.get("hash") == sig and state.get("message_id"):
+        print("Discord: no changes")
+        return state
+    payload = {"embeds": [build_embed(events)]}
+    msg_id = state.get("message_id")
+    if msg_id:
+        r = requests.patch(f"{hook}/messages/{msg_id}", json=payload, timeout=30)
+        if r.status_code == 404:
+            msg_id = None   # message was deleted, post a fresh one
+        else:
+            r.raise_for_status()
+    if not msg_id:
+        r = requests.post(hook, params={"wait": "true"}, json=payload, timeout=30)
+        r.raise_for_status()
+        msg_id = r.json()["id"]
+    state.update({"hash": sig, "message_id": msg_id})
+    print("Discord: updated")
+    return state
+
 edges, seen, after = [], set(), None
 for _ in range(MAX_PAGES):
     conn = find_connection(fetch_page(after))
@@ -67,7 +115,7 @@ for _ in range(MAX_PAGES):
         break
     new = [e for e in conn["edges"] if e["node"]["tournament"]["id"] not in seen]
     if not new:
-        break  # cursor not honored; avoid looping forever
+        break
     for e in new:
         seen.add(e["node"]["tournament"]["id"])
     edges += new
@@ -77,7 +125,7 @@ for _ in range(MAX_PAGES):
     after = info.get("endCursor") or conn["edges"][-1].get("cursor")
 
 if not edges:
-    sys.exit("No events came back from the API; leaving events.json unchanged.")
+    sys.exit("No events came back from the API; leaving everything unchanged.")
 
 events = []
 for e in edges:
@@ -106,13 +154,6 @@ with open("events.json", "w") as f:
     json.dump(events, f, indent=2)
 print(f"Saved {len(events)} Kung Fu Tea events")
 
-if "--discord" in sys.argv and os.environ.get("DISCORD_WEBHOOK") and events:
-    lines = [
-        f"**{e['name']}**\n{e['startLocal']} | {e['price'] or 'See event'} | {e['registered']}/{e['capacity']} registered\n<{e['url']}>"
-        for e in events[:10]
-    ]
-    requests.post(
-        os.environ["DISCORD_WEBHOOK"],
-        json={"content": "Upcoming Riftbound events at Kung Fu Tea Huntington Hills:\n\n" + "\n\n".join(lines)},
-        timeout=30,
-    )
+state = discord_sync(events, load_state())
+with open(STATE_FILE, "w") as f:
+    json.dump(state, f, indent=2)
