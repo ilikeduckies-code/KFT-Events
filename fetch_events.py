@@ -1,4 +1,4 @@
-import hashlib, json, os, sys, requests
+import hashlib, json, os, sys, time, requests
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -12,6 +12,7 @@ HASH = "868030f676276bec926c740aada7129713d4097f6e2dd7c3a0451c4fb43852eb"
 TZ = ZoneInfo("America/Edmonton")
 STATE_FILE = "state.json"
 SIG_KEYS = ["name", "start", "price", "capacity", "format", "type", "url"]
+MISSES_BEFORE_CANCELLED = 2
 
 def fetch_page(after=None):
     variables = {
@@ -61,25 +62,59 @@ def find_connection(obj):
                 return found
     return None
 
-def load_state():
-    try:
-        with open(STATE_FILE) as f:
-            return json.load(f)
-    except Exception:
-        return {}
+def pretty(s):
+    return s.replace("_", " ").title() if s else None
 
-def build_embed(events):
-    lines = []
-    for e in events[:15]:
-        price = e["price"] or "See event page"
-        spots = f"{e['capacity']} spots" if e["capacity"] else ""
-        lines.append(f"**[{e['name']}]({e['url']})**\n{e['startLocal']} | {price}" + (f" | {spots}" if spots else ""))
-    desc = "\n\n".join(lines) if lines else "No events scheduled right now. Check back soon!"
+def parse_utc(s):
+    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+# ---------- Discord helpers ----------
+
+def call(method, url, **kw):
+    r = requests.request(method, url, timeout=30, **kw)
+    if r.status_code == 429:
+        time.sleep(float(r.json().get("retry_after", 2)) + 0.5)
+        r = requests.request(method, url, timeout=30, **kw)
+    return r
+
+def send(hook, payload, mid=None):
+    """Edit message mid if it exists, otherwise post a new one. Returns the message id."""
+    if mid:
+        r = call("PATCH", f"{hook}/messages/{mid}", json=payload)
+        if r.status_code != 404:
+            r.raise_for_status()
+            return mid
+    r = call("POST", hook, params={"wait": "true"}, json=payload)
+    r.raise_for_status()
+    return r.json()["id"]
+
+def delete_msg(hook, mid):
+    r = call("DELETE", f"{hook}/messages/{mid}")
+    if r.status_code not in (200, 204, 404):
+        r.raise_for_status()
+
+def event_embed(e):
+    fields = [{"name": "When", "value": e["startLocal"], "inline": True},
+              {"name": "Price", "value": e["price"] or "See event page", "inline": True}]
+    if e.get("capacity"):
+        fields.append({"name": "Spots", "value": str(e["capacity"]), "inline": True})
+    extra = " | ".join(x for x in [pretty(e.get("type")), pretty(e.get("format"))] if x)
     return {
-        "title": "Upcoming Riftbound Events",
-        "description": desc[:4000],
+        "title": e["name"],
+        "url": e["url"],
+        "description": (extra + "\n" if extra else "") + f"[Details and sign up]({e['url']})",
         "color": 0x2ECC71,
-        "footer": {"text": "Kung Fu Tea Huntington Hills | Updates automatically"},
+        "fields": fields,
+        "footer": {"text": "Kung Fu Tea Huntington Hills"},
+    }
+
+def cancelled_embed(name, url):
+    return {
+        "title": f"{name}",
+        "url": url,
+        "description": "This event is no longer listed. It may have been cancelled or changed. Check the event page or ask in the channel.",
+        "color": 0xE74C3C,
+        "footer": {"text": "Kung Fu Tea Huntington Hills"},
     }
 
 def discord_sync(events, state):
@@ -87,26 +122,47 @@ def discord_sync(events, state):
     if not hook:
         print("No DISCORD_WEBHOOK set; skipping Discord")
         return state
-    sig_data = [{k: e[k] for k in SIG_KEYS} for e in events]
-    sig = hashlib.sha256(json.dumps(sig_data, sort_keys=True).encode()).hexdigest()
-    if state.get("hash") == sig and state.get("message_id"):
-        print("Discord: no changes")
-        return state
-    payload = {"embeds": [build_embed(events)]}
-    msg_id = state.get("message_id")
-    if msg_id:
-        r = requests.patch(f"{hook}/messages/{msg_id}", json=payload, timeout=30)
-        if r.status_code == 404:
-            msg_id = None   # message was deleted, post a fresh one
-        else:
-            r.raise_for_status()
-    if not msg_id:
-        r = requests.post(hook, params={"wait": "true"}, json=payload, timeout=30)
-        r.raise_for_status()
-        msg_id = r.json()["id"]
-    state.update({"hash": sig, "message_id": msg_id})
-    print("Discord: updated")
-    return state
+    known = state.get("events", {})
+    current = {e["id"]: e for e in events}
+    new_state, now = {}, datetime.now(timezone.utc)
+    posted = edited = deleted = cancelled = 0
+
+    for eid, e in current.items():
+        sig = hashlib.sha256(json.dumps({k: e[k] for k in SIG_KEYS}, sort_keys=True).encode()).hexdigest()
+        prev = known.get(eid, {})
+        mid = prev.get("message_id")
+        keep = {"name": e["name"], "url": e["url"], "start": e["start"]}
+        if mid and prev.get("hash") == sig and not prev.get("cancelled"):
+            new_state[eid] = {**keep, "hash": sig, "message_id": mid, "missing": 0}
+            continue
+        new_mid = send(hook, {"embeds": [event_embed(e)]}, mid)
+        posted += 0 if mid and new_mid == mid else 1
+        edited += 1 if mid and new_mid == mid else 0
+        new_state[eid] = {**keep, "hash": sig, "message_id": new_mid, "missing": 0}
+        time.sleep(1)
+
+    for eid, prev in known.items():
+        if eid in current:
+            continue
+        mid = prev.get("message_id")
+        if parse_utc(prev["start"]) < now:
+            if mid:
+                delete_msg(hook, mid)
+                deleted += 1
+                time.sleep(1)
+            continue   # drop from state
+        prev["missing"] = prev.get("missing", 0) + 1
+        if prev["missing"] >= MISSES_BEFORE_CANCELLED and not prev.get("cancelled") and mid:
+            send(hook, {"embeds": [cancelled_embed(prev["name"], prev["url"])]}, mid)
+            prev["cancelled"] = True
+            cancelled += 1
+            time.sleep(1)
+        new_state[eid] = prev
+
+    print(f"Discord: {posted} posted, {edited} edited, {deleted} deleted, {cancelled} marked cancelled")
+    return {"events": new_state}
+
+# ---------- Main ----------
 
 edges, seen, after = [], set(), None
 for _ in range(MAX_PAGES):
@@ -135,12 +191,12 @@ for e in edges:
     t = n["tournament"]
     cfg = t.get("config") or {}
     registered = sum(c["count"] for c in t.get("registrantCounts", []) if c["status"] == "REGISTERED")
-    start = datetime.fromisoformat(t["startsAt"].replace("Z", "+00:00"))
     price = "Free" if t.get("pricing") == "FREE" else (t.get("entryFee") or t.get("pricing"))
     events.append({
+        "id": t["id"],
         "name": t["name"],
         "start": t["startsAt"],
-        "startLocal": start.astimezone(TZ).strftime("%a %b %d, %-I:%M %p"),
+        "startLocal": parse_utc(t["startsAt"]).astimezone(TZ).strftime("%a %b %d, %-I:%M %p"),
         "price": str(price) if price else None,
         "registered": registered,
         "capacity": cfg.get("participantCapacity"),
@@ -154,6 +210,11 @@ with open("events.json", "w") as f:
     json.dump(events, f, indent=2)
 print(f"Saved {len(events)} Kung Fu Tea events")
 
-state = discord_sync(events, load_state())
+try:
+    with open(STATE_FILE) as f:
+        state = json.load(f)
+except Exception:
+    state = {}
+state = discord_sync(events, state)
 with open(STATE_FILE, "w") as f:
     json.dump(state, f, indent=2)
