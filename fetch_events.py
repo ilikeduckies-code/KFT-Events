@@ -10,6 +10,13 @@ MAX_PAGES = 15
 API = "https://playriftbound.com/api/gql"
 HASH = "868030f676276bec926c740aada7129713d4097f6e2dd7c3a0451c4fb43852eb"
 TZ = ZoneInfo("America/Edmonton")
+SESSION = requests.Session()
+SESSION.headers.update({"User-Agent": "KFT-Huntington-Events/1.0"})
+
+def warm_up():
+    r = SESSION.get("https://playriftbound.com/en-US/events",
+                    params={"lat": LAT, "lng": LNG}, timeout=30)
+    print("Warm-up status:", r.status_code, "| cookies received:", list(SESSION.cookies.keys()))
 STATE_FILE = "state.json"
 SIG_KEYS = ["name", "start", "price", "capacity", "format", "type", "url"]
 MISSES_BEFORE_CANCELLED = 2
