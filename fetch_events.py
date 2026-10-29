@@ -49,6 +49,8 @@ def fetch_page(after=None):
         headers={
             "apollo-require-preflight": "true",
             "x-apollo-operation-name": "CompeteTournamentSearch",
+            "apollographql-client-name": "kft-events",
+            "apollographql-client-version": "1.0",
             "Accept": "application/json",
             "Referer": "https://playriftbound.com/en-US/events",
             "Origin": "https://playriftbound.com",
