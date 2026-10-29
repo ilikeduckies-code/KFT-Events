@@ -1,0 +1,28 @@
+{
+  "events": {
+    "117497777490499222": {
+      "name": "Kung Fu Tea Huntington - Friday Night Learn-to-Play Event",
+      "url": "https://playriftbound.com/en-US/events/117497777490499222",
+      "start": "2026-10-31T00:30:00Z",
+      "hash": "1589069c579df83c9121dfcb631f401ecd254db15a03b2c65ce140537e9aa9de",
+      "message_id": "1565160600076681338",
+      "missing": 0
+    },
+    "117520917658108467": {
+      "name": "Kung Fu Tea - Huntington Hills - Legacy Pre-Rift Friday Night Event",
+      "url": "https://playriftbound.com/en-US/events/117520917658108467",
+      "start": "2027-01-23T00:00:00Z",
+      "hash": "a8ba22c9dc45220557e01d791662154baedabd45d3c4a4eeb518963b7c76423f",
+      "message_id": "1565160605596262501",
+      "missing": 0
+    },
+    "117520921219518178": {
+      "name": "Kung Fu Tea - Huntington Hills - Legacy Pre-Rift Friday Night Event",
+      "url": "https://playriftbound.com/en-US/events/117520921219518178",
+      "start": "2027-01-24T19:00:00Z",
+      "hash": "493e528236a6ff70a48c4bd2c7901163267e7108e7af1c45172a42f87bdb8207",
+      "message_id": "1565160610776359006",
+      "missing": 0
+    }
+  }
+}
