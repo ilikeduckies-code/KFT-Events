@@ -83,6 +83,18 @@ def pretty(s):
 def parse_utc(s):
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
 
+def format_price(pricing, fee):
+    if isinstance(fee, dict) and fee.get("minorUnits") is not None:
+        amount = fee["minorUnits"] / 100
+        if amount == 0:
+            return "Free"
+        cur = fee.get("currency") or ""
+        symbol = "$" if cur in ("CAD", "USD") else ""
+        return f"{symbol}{amount:,.2f} {cur}".strip()
+    if pricing == "FREE":
+        return "Free"
+    return pretty(pricing) if pricing else None
+
 # ---------- Discord helpers ----------
 
 def call(method, url, **kw):
@@ -208,7 +220,7 @@ for e in edges:
     t = n["tournament"]
     cfg = t.get("config") or {}
     registered = sum(c["count"] for c in t.get("registrantCounts", []) if c["status"] == "REGISTERED")
-    price = "Free" if t.get("pricing") == "FREE" else (t.get("entryFee") or t.get("pricing"))
+    price = format_price(t.get("pricing"), t.get("entryFee"))
     events.append({
         "id": t["id"],
         "name": t["name"],
