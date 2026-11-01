@@ -1,5 +1,17 @@
 [
   {
+    "id": "117539978785760472",
+    "name": "Kung Fu Tea - Huntington Hills - Friday Night Learn-to-Play Event",
+    "start": "2026-11-07T01:30:00Z",
+    "startLocal": "Fri Nov 06, 7:30 PM",
+    "price": "Free",
+    "registered": 0,
+    "capacity": 12,
+    "format": "CONSTRUCTED",
+    "type": "LEARN_TO_PLAY",
+    "url": "https://playriftbound.com/en-US/events/117539978785760472"
+  },
+  {
     "id": "117520917658108467",
     "name": "Kung Fu Tea - Huntington Hills - Legacy Pre-Rift Friday Night Event",
     "start": "2027-01-23T00:00:00Z",
