@@ -5,7 +5,7 @@
     "start": "2026-11-21T00:30:00Z",
     "startLocal": "Fri Nov 20, 6:30 PM",
     "price": "Free",
-    "registered": 1,
+    "registered": 6,
     "capacity": 12,
     "format": "CONSTRUCTED",
     "type": "LEARN_TO_PLAY",
@@ -34,5 +34,17 @@
     "format": "LIMITED_SEALED",
     "type": "PRE_RIFT",
     "url": "https://playriftbound.com/en-US/events/117520921219518178"
+  },
+  {
+    "id": "117522248373604555",
+    "name": "Kung Fu Tea - Huntington Hills - Legacy Nexus Cup",
+    "start": "2027-02-20T00:30:00Z",
+    "startLocal": "Fri Feb 19, 6:30 PM",
+    "price": "$25.00 CAD",
+    "registered": 0,
+    "capacity": 12,
+    "format": "CONSTRUCTED",
+    "type": "NEXUS_CUP",
+    "url": "https://playriftbound.com/en-US/events/117522248373604555"
   }
 ]
