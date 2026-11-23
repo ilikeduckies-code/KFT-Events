@@ -12,7 +12,7 @@ HASH = "868030f676276bec926c740aada7129713d4097f6e2dd7c3a0451c4fb43852eb"
 TZ = ZoneInfo("America/Edmonton")
 STATE_FILE = "state.json"
 SIG_KEYS = ["name", "start", "price", "capacity", "format", "type", "url"]
-MISSES_BEFORE_CANCELLED = 2
+MISSES_BEFORE_CANCELLED = 3   # runs hourly, so ~3 hours unlisted before we say "cancelled"
 
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "KFT-Huntington-Events/1.0"})
@@ -149,9 +149,10 @@ def discord_sync(events, state):
     if not hook:
         print("No DISCORD_WEBHOOK set; skipping Discord")
         return state
-    known = state.get("events", {})
+    # Updated in place after every Discord call, so a crash mid-sync still leaves accurate state to save.
+    known = state.setdefault("events", {})
     current = {e["id"]: e for e in events}
-    new_state, now = {}, datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
     posted = edited = deleted = cancelled = 0
 
     for eid, e in current.items():
@@ -160,34 +161,35 @@ def discord_sync(events, state):
         mid = prev.get("message_id")
         keep = {"name": e["name"], "url": e["url"], "start": e["start"]}
         if mid and prev.get("hash") == sig and not prev.get("cancelled"):
-            new_state[eid] = {**keep, "hash": sig, "message_id": mid, "missing": 0}
+            known[eid] = {**keep, "hash": sig, "message_id": mid, "missing": 0}
             continue
         new_mid = send(hook, {"embeds": [event_embed(e)]}, mid)
         posted += 0 if mid and new_mid == mid else 1
         edited += 1 if mid and new_mid == mid else 0
-        new_state[eid] = {**keep, "hash": sig, "message_id": new_mid, "missing": 0}
+        known[eid] = {**keep, "hash": sig, "message_id": new_mid, "missing": 0}
         time.sleep(1)
 
-    for eid, prev in known.items():
+    for eid in list(known):
         if eid in current:
             continue
+        prev = known[eid]
         mid = prev.get("message_id")
         if parse_utc(prev["start"]) < now:
             if mid:
                 delete_msg(hook, mid)
                 deleted += 1
                 time.sleep(1)
-            continue   # drop from state
+            del known[eid]
+            continue
         prev["missing"] = prev.get("missing", 0) + 1
         if prev["missing"] >= MISSES_BEFORE_CANCELLED and not prev.get("cancelled") and mid:
             send(hook, {"embeds": [cancelled_embed(prev["name"], prev["url"])]}, mid)
             prev["cancelled"] = True
             cancelled += 1
             time.sleep(1)
-        new_state[eid] = prev
 
     print(f"Discord: {posted} posted, {edited} edited, {deleted} deleted, {cancelled} marked cancelled")
-    return {"events": new_state}
+    return state
 
 # ---------- Main ----------
 
@@ -234,16 +236,25 @@ for e in edges:
         "url": f"https://playriftbound.com/en-US/events/{t['id']}",
     })
 
+try:
+    with open(STATE_FILE) as f:
+        state = json.load(f)   # a corrupt file must fail loudly, not repost everything
+except FileNotFoundError:
+    state = {}
+
+upcoming = [v for v in state.get("events", {}).values()
+            if not v.get("cancelled") and parse_utc(v["start"]) > datetime.now(timezone.utc)]
+if not events and upcoming:
+    sys.exit(f"API returned {len(edges)} events but none for this store, while {len(upcoming)} "
+             "upcoming ones are on record; likely a filter/API change. Leaving everything unchanged.")
+
 events.sort(key=lambda x: x["start"])
 with open("events.json", "w") as f:
     json.dump(events, f, indent=2)
 print(f"Saved {len(events)} Kung Fu Tea events")
 
 try:
-    with open(STATE_FILE) as f:
-        state = json.load(f)
-except Exception:
-    state = {}
-state = discord_sync(events, state)
-with open(STATE_FILE, "w") as f:
-    json.dump(state, f, indent=2)
+    discord_sync(events, state)
+finally:
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f, indent=2)

@@ -1,7 +1,7 @@
 name: Update events
 on:
   schedule:
-    - cron: "17 14 * * *"
+    - cron: "7 * * * *"   # hourly, off the :00 peak when GitHub delays scheduled runs
   workflow_dispatch:
 permissions:
   contents: write
@@ -21,6 +21,7 @@ jobs:
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
       - name: Commit changes
+        if: always()   # keep state.json from a run that failed mid-sync, or the next run reposts
         run: |
           git config user.name "events-bot"
           git config user.email "events-bot@users.noreply.github.com"
